@@ -1,0 +1,77 @@
+
+version: "3.8"
+
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.myresolver.acme.httpchallenge=true
+      - --certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.myresolver.acme.email=admin@example.com
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/letsencrypt:/letsencrypt
+      - ./traefik:/etc/traefik/dynamic
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ollama.rule=PathPrefix(`/ollama`)"
+      - "traefik.http.routers.ollama.entrypoints=websecure"
+      - "traefik.http.routers.ollama.tls.certresolver=myresolver"
+      - "traefik.http.routers.ollama.middlewares=ip-whitelist@file"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    restart: unless-stopped
+
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: chromadb
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chroma.rule=PathPrefix(`/chroma`)"
+      - "traefik.http.routers.chroma.entrypoints=websecure"
+      - "traefik.http.routers.chroma.tls.certresolver=myresolver"
+      - "traefik.http.routers.chroma.middlewares=ip-whitelist@file"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+    restart: unless-stopped
+
+  whisper:
+    image: ghcr.io/ggerganov/whisper.cpp:latest
+    container_name: whisper
+    command: ["./main", "-m", "models/ggml-medium.bin", "-f", "audio/recording.wav"]
+    volumes:
+      - ./data/whisper:/audio
+    restart: unless-stopped
+
+  piper:
+    image: rhasspy/piper
+    container_name: piper
+    command: ["--model", "fr_FR-upmc-medium.onnx", "--http"]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.piper.rule=PathPrefix(`/piper`)"
+      - "traefik.http.routers.piper.entrypoints=websecure"
+      - "traefik.http.routers.piper.tls.certresolver=myresolver"
+      - "traefik.http.routers.piper.middlewares=ip-whitelist@file"
+    volumes:
+      - ./data/piper:/home/piper/.local/share/piper-tts/models
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
